@@ -1,0 +1,20 @@
+# Disposable PostgreSQL for `npm test` only. Data lives in tmpfs and is gone when
+# the container stops. Kept separate from docker-compose.yml so it needs no JWT_SECRET.
+# Tests replace RabbitMQ with an in-memory fake, so no broker is started here.
+name: request-service-test
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: requests
+      POSTGRES_PASSWORD: requests
+      POSTGRES_DB: requests_test
+    ports:
+      - "${TEST_POSTGRES_PORT:-5435}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U requests -d requests_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 15

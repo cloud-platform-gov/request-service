@@ -1,0 +1,81 @@
+# Local development: PostgreSQL, RabbitMQ, a one-shot migration job and the Request Service.
+# The API Gateway runs from its own Compose project and reaches this service at
+# http://host.docker.internal:4003 (its default).
+#
+# JWT_SECRET must be set in the shell or in .env, and must equal the Identity
+# Service's secret, or no token will verify: JWT_SECRET=$(openssl rand -base64 48)
+#
+# Host ports avoid the Identity Service's Compose project (Postgres on 5432).
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      # Local-only credentials; production uses a managed database and injected secrets.
+      POSTGRES_USER: requests
+      POSTGRES_PASSWORD: requests
+      POSTGRES_DB: requests
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U requests -d requests"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      # Local-only credentials; the default guest user only works from localhost.
+      RABBITMQ_DEFAULT_USER: requests
+      RABBITMQ_DEFAULT_PASS: requests
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    image: request-service:local
+    command: ["node", "dist/db/migrate.js"]
+    environment:
+      DATABASE_URL: postgres://requests:requests@postgres:5432/requests
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  request-service:
+    image: request-service:local
+    ports:
+      - "${PORT:-4003}:4003"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://requests:requests@postgres:5432/requests
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to the Identity Service's secret}
+      JWT_ISSUER: ${JWT_ISSUER:-cloud-platform-gov-identity}
+      RABBITMQ_URL: amqp://requests:requests@rabbitmq:5672
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-cloud-platform-gov.events}
+      RABBITMQ_PUBLISH_TIMEOUT_MS: ${RABBITMQ_PUBLISH_TIMEOUT_MS:-5000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+tests
+.env
+.env.*
+!.env.example
+*.log
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md
+CLAUDE.md
+docker-compose.test.yml
